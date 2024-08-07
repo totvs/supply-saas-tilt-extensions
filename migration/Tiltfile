@@ -1,0 +1,258 @@
+load('ext://uibutton', 'cmd_button', 'text_input', 'choice_input')
+
+version_settings(check_updates=True, constraint='>=0.33.12')
+
+def setup_migration_java(
+  databases, 
+  migrationimage, 
+  migrationfolder, 
+  postgresuser='postgres', 
+  postgrespass='totvs@123',
+  pgadminuser='pgadmin@totvs.com.br',
+  pgadminpass='admin'
+):
+  postgres = {
+    'postgres': {
+      'image': 'postgres:16',
+      'container_name': 'postgres',
+      'environment': {
+        'POSTGRES_USER': postgresuser,
+        'POSTGRES_PASSWORD': postgrespass
+      },
+      'ports': ['5432:5432'],
+      'volumes': ['data-volume:/var/lib/postgresql/data'],
+      'command': '-c logging_collector=on -c log_statement=all',
+      'healthcheck': {
+        'test': ['CMD-SHELL', 'pg_isready'],
+        'interval': '10s',
+        'timeout': '5s',
+        'retries': 5 
+      }
+    }
+  }
+
+  pgadmin = {
+    'pgadmin': {
+      'image': 'dpage/pgadmin4:latest',
+      'container_name': 'pgadmin',
+      'restart': 'always',
+      'entrypoint': '''
+        /bin/sh -c "
+        mkdir -p /var/lib/pgadmin/storage/{pgadminuser};
+        cp /pgadmin-config/pgpass /var/lib/pgadmin/storage/{pgadminuser}/pgpass;
+        chown pgadmin:root /var/lib/pgadmin/storage/{pgadminuser}/pgpass;
+        chmod 600 /var/lib/pgadmin/storage/{pgadminuser}/pgpass;
+        /entrypoint.sh;        
+        "
+      '''.format(pgadminuser=pgadminuser.replace('@','_')),
+      'depends_on': ['postgres'],
+      'environment': {
+        'PGADMIN_DEFAULT_EMAIL': pgadminuser,
+        'PGADMIN_DEFAULT_PASSWORD': pgadminpass,
+        'PGADMIN_SERVER_JSON_FILE': '/pgadmin-config/servers.json'
+      },
+      'ports': ['8080:80'],
+      'volumes': ['pgadmin-volume:/var/lib/pgadmin', 'pgadmin-config:/pgadmin-config']
+    }
+  }
+
+  pgadminjson = '''{{
+        "Servers": {{
+            "1": {{
+                "Name": "postgres",
+                "Group": "Servers",
+                "Host": "postgres",
+                "Port": 5432,
+                "MaintenanceDB": "postgres",
+                "Username": "{postgresuser}",
+                "UseSSHTunnel": 0,
+                "TunnelPort": "22",
+                "TunnelAuthentication": 0,
+                "KerberosAuthentication": false,
+                "ConnectionParameters": {{
+                    "sslmode": "prefer",
+                    "connect_timeout": 10,
+                    "sslcert": "<STORAGE_DIR>/.postgresql/postgresql.crt",
+                    "sslkey": "<STORAGE_DIR>/.postgresql/postgresql.key",
+                    "passfile": "/pgpass"
+                }}
+            }}
+        }}
+    }}'''.format(postgresuser=postgresuser).replace('"',"\\\"").replace("\n",'').replace('  ','')
+
+  pgadminconfig = {
+    'pgadmin-config': {
+      'image': 'busybox:stable',
+      'container_name': 'pgadmin-config',
+      'command': 'sh -c \'echo "' + pgadminjson + '" > /pgadmin-config/servers.json && echo "postgres:5432:*:' + postgresuser + ':' + postgrespass + '" > /pgadmin-config/pgpass\'', 
+      'volumes': ['pgadmin-config:/pgadmin-config']
+    }
+  }
+
+  docker_compose(encode_yaml(
+    {
+      'services': postgres | pgadminconfig | pgadmin | migration(databases,migrationimage) | 
+      flyway(databases, postgresuser, postgrespass) | atlas(databases, postgresuser, postgrespass),
+      'volumes': volumes(databases)
+    }))
+
+  dc_resource('postgres', labels=["database"])
+  dc_resource('pgadmin-config', labels=["database"])
+  dc_resource('pgadmin', labels=["database"], resource_deps=['pgadmin-config'])
+
+  for db in databases:
+
+    dc_resource('migration-' + db, labels=[db])
+
+    cmd_button(name='pull-migration-image-' + db,
+              argv=['sh', '-c', 'docker pull ' + migrationimage ],
+              text='Pull image',
+              resource='migration-' + db,
+              icon_name='cloud_download')
+
+    local_resource(name='create db ' + db,
+                   cmd='sh -c "docker exec postgres psql -U {postgresuser} -c \'CREATE DATABASE \\\"{db}\\\"\' || true"'.format(postgresuser=postgresuser, db=db), 
+                   resource_deps=['postgres'], 
+                   labels=[db])
+    cmd_button(name='drop-database-' + db,
+              resource='create db ' + db,
+              argv=['sh', '-c', 'docker exec postgres psql -U {postgresuser} -c \'DROP DATABASE "{db}"\''.format(postgresuser=postgresuser,db=db) ],
+              text='Drop Database ' + db,
+              icon_name='delete')
+
+    dc_resource('flyway-' + db, labels=[db], resource_deps=['postgres', 'migration-' + db, 'create db ' + db])
+
+    dc_resource('atlas-' + db, labels=[db], resource_deps=['flyway-' + db], new_name='diff-' + db, auto_init=False, trigger_mode=TRIGGER_MODE_MANUAL)
+
+    cmd_button(name='recreate-flyway-schema-' + db,
+              resource='flyway-' + db,
+              argv=['sh', '-c', 'docker exec postgres psql -U {postgresuser} -d {db} -c "DROP SCHEMA flyway CASCADE; CREATE SCHEMA flyway;" && tilt trigger flyway-{db}'.format(postgresuser=postgresuser, db=db)],
+              text='Recreate flyway schema ' + db,
+              icon_name='recycling')
+
+    cmd_button(name='generate-migration-file-' + db,
+              resource='diff-' + db,
+              argv=['sh', '-c', '''tilt trigger diff-{db} ; \
+              while [ "$(tilt get dc/diff-{db} -o json | jq -r \'.status.containerState.status\')" != "null" ] ; do echo "wait" ; done ; \
+              while [ "$(tilt get dc/diff-{db} -o json | jq -r \'.status.containerState.status\')" != "exited" ] ; do echo "running"; sleep 0.5 ; done ; \
+              tilt logs diff-{db} | sed -n \'{sed}\' | sed \'{clean}\' > {folder}/{migrationversion}__$DESC.sql ; \
+              echo "Done" ; \
+              tilt trigger \'(Tiltfile)\''''.format(
+                db=db, 
+                sed='/Started/{:1;$!{/Step 1 -/!{N;b1};h}};${x;p};d',
+                clean='1d;$d',
+                folder=migrationfolder.format(db=db),
+                migrationversion=nextversion(migrationfolder)
+              )],
+              text='Generate migration file ' + db,
+              icon_name='difference',
+              inputs=[
+                text_input('DESC', label="Descrição")
+              ])
+
+def migration(dbs,migrationimage):
+  migration = {}
+  for db in dbs:
+    migration = migration | {
+      'migration-' + db: {
+        'image': migrationimage,
+        'user': 'root',
+        'entrypoint': ['/bin/sh'],
+        'command': '-c "cp -rv /app/db/migration/ /sql/"',
+        'volumes': ['migration-volume-' + db + ':/sql', 'tmp-volume-' + db + ':/tmp']
+      }
+    }
+  return migration
+
+def flyway(dbs, postgresuser, postgrespass):
+
+  flyway = {}
+
+  for db in dbs:
+    flyway = flyway | {
+      'flyway-' + db: {
+        'image': 'flyway/flyway:10',
+        'environment': {
+          'FLYWAY_USER': postgresuser,
+          'FLYWAY_PASSWORD': postgrespass,
+          'FLYWAY_URL': 'jdbc:postgresql://postgres:5432/' + db + '?ssl=false&sslfactory=org.postgresql.ssl.NonValidatingFactory',
+          'FLYWAY_BASELINE_ON_MIGRATE': 'true',
+          'FLYWAY_LOCATIONS': 'filesystem:/sql/migration/'
+        },
+        'entrypoint': ['/bin/bash'],
+        'command': '-c "flyway migrate -schemas=flyway ; flyway migrate -schemas=baseline"',
+        'volumes': ['migration-volume-' + db + ':/sql'],
+        'depends_on': ['postgres','migration-' + db]
+      }
+    }
+  return flyway
+
+def atlas(dbs, postgresuser, postgrespass):
+
+  atlas = {}
+
+  for db in dbs:
+    atlas = atlas | {
+      'atlas-' + db: {
+        'image': 'arigaio/atlas:latest-community',
+        'depends_on': ['flyway-' + db, 'postgres', 'migration-' + db ],
+        'command': '''
+          schema diff
+          --to   "postgres://{postgresuser}:{postgrespass}@postgres:5432/{db}?search_path=flyway&sslmode=disable"
+          --from "postgres://{postgresuser}:{postgrespass}@postgres:5432/{db}?search_path=baseline&sslmode=disable"
+        '''.format(db=db, postgresuser=postgresuser, postgrespass=url_encode(postgrespass))
+      }
+    }
+
+  return atlas
+
+def url_encode(text):
+    allowed = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_.~'
+    result = ''
+
+    for character in text.elems():
+        if character in allowed:
+            result += character
+        elif character == ' ':
+            result += '+'
+        else:
+            result += '%' + '%X' % ord(character)
+
+    return result
+
+def volumes (dbs):
+  volumes = {
+    'data-volume': {},
+    'pgadmin-volume': {},
+    'pgadmin-config': {}
+  }
+
+  for db in dbs:
+    volumes = volumes | {
+       'migration-volume-' + db : {},
+       'tmp-volume-' + db : {}
+    }
+
+  return volumes
+
+def inc_version(version):
+  version = version.split('.')
+  idx=len(version) - 1
+  stl=len(version[idx])
+  version[idx] = str(int(version[idx]) + 1)
+  for i in range(stl - len(version[idx])):
+    version[idx]='0' + version[idx]
+  return '.'.join(version)
+
+
+def nextversion(migrationfolder):
+  files = listdir(migrationfolder)
+  version = '0'
+  for file in files:
+    version = file[file.rindex('/')+2:]
+    version = version[:version.index('__')]
+
+  version = 'V' + inc_version(version)
+  print(version)
+  return version
+
