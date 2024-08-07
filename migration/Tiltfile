@@ -9,7 +9,8 @@ def setup_migration_java(
   postgresuser='postgres', 
   postgrespass='totvs@123',
   pgadminuser='pgadmin@totvs.com.br',
-  pgadminpass='admin'
+  pgadminpass='admin',
+  pgadminport='8888'
 ):
   postgres = {
     'postgres': {
@@ -51,7 +52,7 @@ def setup_migration_java(
         'PGADMIN_DEFAULT_PASSWORD': pgadminpass,
         'PGADMIN_SERVER_JSON_FILE': '/pgadmin-config/servers.json'
       },
-      'ports': ['8080:80'],
+      'ports': [ pgadminport + ':80'],
       'volumes': ['pgadmin-volume:/var/lib/pgadmin', 'pgadmin-config:/pgadmin-config']
     }
   }
