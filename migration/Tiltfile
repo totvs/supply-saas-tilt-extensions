@@ -197,6 +197,9 @@ def atlas(dbs, postgresuser, postgrespass):
       'atlas-' + db: {
         'image': 'arigaio/atlas:latest-community',
         'depends_on': ['flyway-' + db, 'postgres', 'migration-' + db ],
+        'environment': {
+          'ATLAS_NO_UPGRADE_SUGGESTIONS': 'true'
+        },
         'command': '''
           schema diff
           --to   "postgres://{postgresuser}:{postgrespass}@postgres:5432/{db}?search_path=flyway&sslmode=disable"
