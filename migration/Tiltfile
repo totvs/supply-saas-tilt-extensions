@@ -136,12 +136,10 @@ def setup_migration_java(
               argv=['sh', '-c', '''tilt trigger diff-{db} ; \
               while [ "$(tilt get dc/diff-{db} -o json | jq -r \'.status.containerState.status\')" != "null" ] ; do echo "wait" ; done ; \
               while [ "$(tilt get dc/diff-{db} -o json | jq -r \'.status.containerState.status\')" != "exited" ] ; do echo "running"; sleep 1 ; done ; \
-              tilt logs diff-{db} | sed -n \'{sed}\' | sed \'{clean}\' > {folder}/{migrationversion}__$DESC.sql ; \
+              docker logs diff-{db} > {folder}/{migrationversion}__$DESC.sql ; \
               echo "Done" ; \
               tilt trigger \'(Tiltfile)\''''.format(
                 db=db, 
-                sed='/Started/{:1;$!{/Step 1 -/!{N;b1};h}};${x;p};d',
-                clean='{1d;$d}',
                 folder=migrationfolder.format(db=db),
                 migrationversion=nextversion(migrationfolder)
               )],
@@ -157,6 +155,7 @@ def migration(dbs,migrationimage):
     migration = migration | {
       'migration-' + db: {
         'image': migrationimage,
+        'container_name': 'migration-' + db,
         'user': 'root',
         'entrypoint': ['/bin/sh'],
         'command': '-c "cp -rv /app/db/migration/ /sql/"',
@@ -173,6 +172,7 @@ def flyway(dbs, postgresuser, postgrespass):
     flyway = flyway | {
       'flyway-' + db: {
         'image': 'flyway/flyway:10',
+        'container_name': 'flyway-' + db,
         'environment': {
           'FLYWAY_USER': postgresuser,
           'FLYWAY_PASSWORD': postgrespass,
@@ -196,6 +196,7 @@ def atlas(dbs, postgresuser, postgrespass):
     atlas = atlas | {
       'atlas-' + db: {
         'image': 'arigaio/atlas:latest-community',
+        'container_name': 'diff-' + db,
         'depends_on': ['flyway-' + db, 'postgres', 'migration-' + db ],
         'environment': {
           'ATLAS_NO_UPGRADE_SUGGESTIONS': 'true'
