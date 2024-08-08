@@ -9,7 +9,7 @@ def setup_migration_java(
   postgresuser='postgres', 
   postgrespass='totvs@123',
   pgadminuser='pgadmin@totvs.com.br',
-  pgadminpass='admin',
+  pgadminpass='admin@123',
   pgadminport='8888'
 ):
   postgres = {
