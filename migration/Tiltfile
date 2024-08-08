@@ -140,7 +140,7 @@ def setup_migration_java(
               echo "Done" ; \
               tilt trigger \'(Tiltfile)\''''.format(
                 db=db, 
-                sed='/Started/{:1;$!{/Step 1 -/!{N;b1};h}};${x;p};d',
+                sed='/^Successfully triggered update for resource:/{n;h;b};H;${x;p}',
                 clean='1d;$d',
                 folder=migrationfolder.format(db=db),
                 migrationversion=nextversion(migrationfolder)
