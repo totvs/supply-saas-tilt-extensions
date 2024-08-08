@@ -135,12 +135,12 @@ def setup_migration_java(
               resource='diff-' + db,
               argv=['sh', '-c', '''tilt trigger diff-{db} ; \
               while [ "$(tilt get dc/diff-{db} -o json | jq -r \'.status.containerState.status\')" != "null" ] ; do echo "wait" ; done ; \
-              while [ "$(tilt get dc/diff-{db} -o json | jq -r \'.status.containerState.status\')" != "exited" ] ; do echo "running"; sleep 0.5 ; done ; \
+              while [ "$(tilt get dc/diff-{db} -o json | jq -r \'.status.containerState.status\')" != "exited" ] ; do echo "running"; sleep 1 ; done ; \
               tilt logs diff-{db} | sed -n \'{sed}\' | sed \'{clean}\' > {folder}/{migrationversion}__$DESC.sql ; \
               echo "Done" ; \
               tilt trigger \'(Tiltfile)\''''.format(
                 db=db, 
-                sed='/DONE IN:/{n;h;b};H;${x;p}',
+                sed='/Started$/{n;h;b};H;${x;p}',
                 clean='{1d;$d}',
                 folder=migrationfolder.format(db=db),
                 migrationversion=nextversion(migrationfolder)
