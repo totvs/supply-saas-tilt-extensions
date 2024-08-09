@@ -32,31 +32,6 @@ def setup_migration_java(
     }
   }
 
-  pgadmin = {
-    'pgadmin': {
-      'image': 'dpage/pgadmin4:latest',
-      'container_name': 'pgadmin',
-      'restart': 'always',
-      'entrypoint': '''
-        /bin/sh -c "
-        mkdir -p /var/lib/pgadmin/storage/{pgadminuser};
-        cp /pgadmin-config/pgpass /var/lib/pgadmin/storage/{pgadminuser}/pgpass;
-        chown pgadmin:root /var/lib/pgadmin/storage/{pgadminuser}/pgpass;
-        chmod 600 /var/lib/pgadmin/storage/{pgadminuser}/pgpass;
-        /entrypoint.sh;        
-        "
-      '''.format(pgadminuser=pgadminuser.replace('@','_')),
-      'depends_on': ['postgres'],
-      'environment': {
-        'PGADMIN_DEFAULT_EMAIL': pgadminuser,
-        'PGADMIN_DEFAULT_PASSWORD': pgadminpass,
-        'PGADMIN_SERVER_JSON_FILE': '/pgadmin-config/servers.json'
-      },
-      'ports': [ pgadminport + ':80'],
-      'volumes': ['pgadmin-volume:/var/lib/pgadmin', 'pgadmin-config:/pgadmin-config']
-    }
-  }
-
   pgadminjson = '''{{
         "Servers": {{
             "1": {{
@@ -81,25 +56,47 @@ def setup_migration_java(
         }}
     }}'''.format(postgresuser=postgresuser).replace('"',"\\\"").replace("\n",'').replace('  ','')
 
-  pgadminconfig = {
-    'pgadmin-config': {
-      'image': 'busybox:stable',
-      'container_name': 'pgadmin-config',
-      'command': 'sh -c \'echo "' + pgadminjson + '" > /pgadmin-config/servers.json && echo "postgres:5432:*:' + postgresuser + ':' + postgrespass + '" > /pgadmin-config/pgpass\'', 
-      'volumes': ['pgadmin-config:/pgadmin-config']
+  pgadmin = {
+    'pgadmin': {
+      'image': 'dpage/pgadmin4:latest',
+      'container_name': 'pgadmin',
+      'restart': 'always',
+      'entrypoint': '''
+        /bin/sh -c "
+        mkdir -p /var/lib/pgadmin/storage/{pgadminuser};
+        echo '{pgadminjson}' > /var/lib/pgadmin/storage/servers.json;
+        echo 'postgres:5432:*:{postgresuser}:{postgrespass}' > /var/lib/pgadmin/storage/{pgadminuser}/pgpass;
+        chown pgadmin:root /var/lib/pgadmin/storage/{pgadminuser}/pgpass;
+        chmod 600 /var/lib/pgadmin/storage/{pgadminuser}/pgpass;
+        /entrypoint.sh;        
+        "
+      '''.format(
+        pgadminuser=pgadminuser.replace('@','_'),
+        pgadminjson=pgadminjson,
+        postgresuser=postgresuser,
+        postgrespass=postgrespass
+      ),
+      'depends_on': ['postgres'],
+      'environment': {
+        'PGADMIN_DEFAULT_EMAIL': pgadminuser,
+        'PGADMIN_DEFAULT_PASSWORD': pgadminpass,
+        'PGADMIN_SERVER_JSON_FILE': '/var/lib/pgadmin/storage/servers.json'
+      },
+      'ports': [ pgadminport + ':80'],
+      'volumes': ['pgadmin-volume:/var/lib/pgadmin']
     }
   }
 
   docker_compose(encode_yaml(
     {
-      'services': postgres | pgadminconfig | pgadmin | migration(databases,migrationimage) | 
+     
+     'services': postgres | pgadmin | migration(databases,migrationimage) | 
       flyway(databases, postgresuser, postgrespass) | atlas(databases, postgresuser, postgrespass),
       'volumes': volumes(databases)
     }))
 
   dc_resource('postgres', labels=["database"])
-  dc_resource('pgadmin-config', labels=["database"])
-  dc_resource('pgadmin', labels=["database"], resource_deps=['pgadmin-config'])
+  dc_resource('pgadmin', labels=["database"], resource_deps=['postgres'])
 
   for db in databases:
 
@@ -228,8 +225,7 @@ def url_encode(text):
 def volumes (dbs):
   volumes = {
     'data-volume': {},
-    'pgadmin-volume': {},
-    'pgadmin-config': {}
+    'pgadmin-volume': {}
   }
 
   for db in dbs:
