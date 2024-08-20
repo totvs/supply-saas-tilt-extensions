@@ -1,0 +1,7 @@
+load('./migration/Tiltfile', 'setup_migration_java')
+
+setup_migration_java(
+  databases = ['tap-control'],
+  migrationimage = 'us-central1-docker.pkg.dev/tab1784-service-28-322963/engenharia/tap/control-api:latest',
+  migrationfolder = 'migration'
+)
