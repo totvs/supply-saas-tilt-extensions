@@ -1,4 +1,4 @@
-load('./migration/Tiltfile', 'setup_migration_java')
+load('../migration/Tiltfile', 'setup_migration_java')
 
 setup_migration_java(
   databases = ['tap-control'],
