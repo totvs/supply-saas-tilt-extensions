@@ -175,7 +175,8 @@ def flyway(dbs, postgresuser, postgrespass):
           'FLYWAY_PASSWORD': postgrespass,
           'FLYWAY_URL': 'jdbc:postgresql://postgres:5432/' + db + '?ssl=false&sslfactory=org.postgresql.ssl.NonValidatingFactory',
           'FLYWAY_BASELINE_ON_MIGRATE': 'true',
-          'FLYWAY_LOCATIONS': 'filesystem:/sql/migration/'
+          'FLYWAY_LOCATIONS': 'filesystem:/sql/migration/',
+          'FLYWAY_POSTGRESQL_TRANSACTIONAL_LOCK': 'false'
         },
         'entrypoint': ['/bin/bash'],
         'command': '-c "flyway migrate -schemas=flyway ; flyway migrate -schemas=baseline"',
