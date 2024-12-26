@@ -168,7 +168,7 @@ def flyway(dbs, postgresuser, postgrespass):
   for db in dbs:
     flyway = flyway | {
       'flyway-' + db: {
-        'image': 'flyway/flyway:10',
+        'image': 'flyway/flyway:11',
         'container_name': 'flyway-' + db,
         'environment': {
           'FLYWAY_USER': postgresuser,
